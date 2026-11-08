@@ -4,11 +4,22 @@
  *
  *   node --test test/index.test.js
  */
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { apply } from '../index.js';
+
+/** 测试专用 DSH_HOME，避免读写真实用户的 mc-event.json。 */
+const TEST_HOME = mkdtempSync(join(tmpdir(), 'dsh-mc-event-test-'));
+process.env.DSH_HOME = TEST_HOME;
+
+after(() => {
+  rmSync(TEST_HOME, { recursive: true, force: true });
+});
 
 /**
  * 构造一个只提供本插件所需能力的假 Context。
@@ -23,6 +34,7 @@ function fakeContext(options = {}) {
   const effects = [];
   const listeners = new Map();
   const agents = new Map();
+  const routes = new Map();
 
   if (options.agent !== undefined) {
     const spec = options.agent;
@@ -39,7 +51,24 @@ function fakeContext(options = {}) {
     });
   }
 
+  const webServer =
+    options.webServer ??
+    (options.withWebServer === true
+      ? {
+          register(route) {
+            if (routes.has(route.path)) {
+              throw new Error(`duplicate route: ${route.path}`);
+            }
+            routes.set(route.path, route.handler);
+            return () => {
+              routes.delete(route.path);
+            };
+          },
+        }
+      : undefined);
+
   const ctx = {
+    webServer,
     tools: {
       register(definition) {
         tools.set(definition.name, definition);
@@ -67,6 +96,10 @@ function fakeContext(options = {}) {
         flushed.push(session);
         return true;
       },
+      get(sessionId) {
+        if (options.sessions !== undefined) return options.sessions[sessionId];
+        return agents.has(sessionId) ? { id: sessionId } : undefined;
+      },
     },
     on(event, listener) {
       const list = listeners.get(event) ?? [];
@@ -77,9 +110,23 @@ function fakeContext(options = {}) {
     effect(callback) {
       effects.push(callback());
     },
+    inject(names, callback) {
+      const available = names.every((name) => ctx.get(name) !== undefined);
+      if (available) callback(ctx);
+      return () => {};
+    },
     get(name) {
       if (name === 'agents') return ctx.agents;
       if (name === 'sessions') return ctx.sessions;
+      if (name === 'webServer') return ctx.webServer;
+      if (name === 'sessionTitle') {
+        if (options.sessionTitle === undefined) return undefined;
+        return {
+          get(session) {
+            return options.sessionTitle(session);
+          },
+        };
+      }
       return undefined;
     },
     logger: { info() {}, warn() {}, debug() {} },
@@ -89,13 +136,46 @@ function fakeContext(options = {}) {
 
   return {
     tool: tools.get('subscribe_mc_event'),
+    catalogTool: tools.get('get_mc_event_types'),
+    tools,
     followed,
     steered,
     flushed,
     listeners,
     agents,
+    routes,
+    webServer,
     dispose() {
       while (effects.length > 0) effects.pop()();
+    },
+  };
+}
+
+/**
+ * 把假 webServer 注册的处理器挂到一个真实的 localhost HTTP 服务上。
+ * @param {Map<string, Function>} routes - 路径 → 处理器。
+ * @returns {Promise<{ base: string, close: () => Promise<void> }>} 服务地址与关闭函数。
+ */
+async function startRouteServer(routes) {
+  const server = createHttpServer((request, response) => {
+    const handler = routes.get('/api/dsh-mc-event/listener');
+    if (handler === undefined) {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    Promise.resolve(handler(request, response)).catch((error) => {
+      response.writeHead(500);
+      response.end(String(error));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+  return {
+    base: `http://127.0.0.1:${port}`,
+    async close() {
+      await new Promise((resolve) => server.close(resolve));
     },
   };
 }
@@ -189,7 +269,12 @@ test('start 后单条事件作为新 user 消息投递，并调用 flush', async
     assert.match(text, /player_hurt/);
     assert.match(text, /"health_lost":4/);
     assert.match(text, /untrusted in-game data/);
-    assert.match(text, /subscribe_mc_event\(action:"stop"\)/);
+    assert.ok(
+      text.includes(
+        `Subscription ${started.subscription_id} is still listening; stop it when you no longer need events.`,
+      ),
+    );
+    assert.doesNotMatch(text, /127\.0\.0\.1:\d+/);
     assert.equal(ctx.flushed.length, 1);
 
     const status = await ctx.tool.execute({ action: 'status' }, exec);
@@ -540,10 +625,13 @@ test('两个 preset 实例共用同一个监听器', async () => {
   }
 });
 
-test('包声明为普通依赖而不是全局 bundle', () => {
+test('包声明为普通依赖而不是全局 bundle，并带 Web 客户端', () => {
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(manifest.name, 'dsh-mc-event');
-  assert.equal(manifest.dsh, undefined);
+  assert.equal(manifest.name, '@local/dsh-mc-event');
+  assert.equal(manifest.dsh.bundle, undefined);
+  assert.equal(manifest.dsh.client.platform, 'web');
+  assert.equal(manifest.exports['./client'], './client.js');
+  assert.ok(manifest.files.includes('client.js'));
   assert.equal(manifest.peerDependencies, undefined);
 });
 
@@ -576,6 +664,216 @@ test('工具描述包含已知事件类型与不可信提示', () => {
     assert.match(blocks[0].text, /Subscribed to live Minecraft events/);
     assert.match(blocks[0].text, /Do not poll/);
   } finally {
+    ctx.dispose();
+  }
+});
+
+/** README 中记录的事件目录样例。 */
+const CATALOG_TEXT = `player_hurt damage_type attacker_type attacker health_before health_after absorption_before absorption_after health_lost absorption_lost damage_taken max_health hits_same_tick
+item_pickup item count
+chat message
+hunger_change from to threshold
+baritone_task_end result goal
+dimension_change from to
+player_death message damage_type attacker attacker_type
+player_respawn dimension
+`;
+
+test('get_mc_event_types 解析目录并渲染字段', async () => {
+  const server = createHttpServer((request, response) => {
+    assert.equal(request.url, '/evt/');
+    response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+    response.end(CATALOG_TEXT);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+  const catalogUrl = `http://127.0.0.1:${port}/evt/`;
+  const ctx = fakeContext({
+    config: { port: 0, catalogUrl },
+    agent: { id: 'session-1', status: 'idle' },
+  });
+  try {
+    assert.ok(ctx.catalogTool);
+    const result = await ctx.catalogTool.execute({}, exec);
+    assert.equal(result.ok, true);
+    assert.equal(result.endpoint, catalogUrl);
+    assert.equal(result.count, 8);
+    assert.deepEqual(
+      result.events[0].fields,
+      [
+        'damage_type',
+        'attacker_type',
+        'attacker',
+        'health_before',
+        'health_after',
+        'absorption_before',
+        'absorption_after',
+        'health_lost',
+        'absorption_lost',
+        'damage_taken',
+        'max_health',
+        'hits_same_tick',
+      ],
+    );
+    assert.deepEqual(result.events[1], { type: 'item_pickup', fields: ['item', 'count'] });
+    const blocks = ctx.catalogTool.output.render({}, result);
+    assert.match(blocks[0].text, /Minecraft event types \(8\)/);
+    assert.match(blocks[0].text, /player_hurt \(12 field\(s\)\): damage_type/);
+    assert.match(blocks[0].text, /data/);
+  } finally {
+    ctx.dispose();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('get_mc_event_types 对非 2xx 给出可读错误', async () => {
+  const server = createHttpServer((_request, response) => {
+    response.writeHead(500, { 'content-type': 'text/plain' });
+    response.end('nope');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+  const ctx = fakeContext({
+    config: { port: 0, catalogUrl: `http://127.0.0.1:${port}/evt/` },
+    agent: { id: 'session-1', status: 'idle' },
+  });
+  try {
+    await assert.rejects(ctx.catalogTool.execute({}, exec), /HTTP 500/);
+  } finally {
+    ctx.dispose();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('界面开关暂停投递但不结束订阅，重新开启后继续投递', async () => {
+  const ctx = fakeContext({
+    config: { port: 0, batchWindowMs: 500 },
+    withWebServer: true,
+    agent: { id: 'session-1', status: 'idle' },
+    sessions: { 'session-1': { id: 'session-1' } },
+    sessionTitle: () => ({ title: 'Mining session' }),
+  });
+  const route = await startRouteServer(ctx.routes);
+  try {
+    const initial = await fetch(route.base + '/api/dsh-mc-event/listener');
+    assert.equal(initial.status, 200);
+    const initialState = await initial.json();
+    assert.equal(initialState.enabled, true);
+    assert.equal(initialState.listening, false);
+    assert.deepEqual(initialState.subscriptions, []);
+
+    const started = await ctx.tool.execute({ action: 'start' }, exec);
+    const listed = await (await fetch(route.base + '/api/dsh-mc-event/listener')).json();
+    assert.equal(listed.subscriptions.length, 1);
+    assert.equal(listed.subscriptions[0].session_id, 'session-1');
+    assert.equal(listed.subscriptions[0].session_title, 'Mining session');
+    assert.equal(listed.subscriptions[0].subscription_id, started.subscription_id);
+
+    // 先进入批量窗口，再关闭开关：待投递缓冲应被丢弃。
+    await post(started.endpoint, { type: 'chat', data: { message: 'pending before pause' } });
+    const pausedResponse = await fetch(route.base + '/api/dsh-mc-event/listener', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(pausedResponse.status, 200);
+    const paused = await pausedResponse.json();
+    assert.equal(paused.enabled, false);
+    assert.equal(paused.listening, true);
+    assert.equal(paused.subscriptions.length, 1);
+    assert.equal(JSON.parse(readFileSync(join(TEST_HOME, 'mc-event.json'), 'utf8')).listenerEnabled, false);
+
+    const pausedStatus = await ctx.tool.execute({ action: 'status' }, exec);
+    assert.equal(pausedStatus.status, 'active');
+    assert.equal(pausedStatus.enabled, false);
+    assert.match(pausedStatus.note, /paused/);
+
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    assert.equal(ctx.followed.length, 0);
+
+    const dropped = await post(started.endpoint, { type: 'chat', data: { message: 'while paused' } });
+    assert.deepEqual(await dropped.json(), { ok: true, accepted: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(ctx.followed.length, 0);
+
+    const resumedResponse = await fetch(route.base + '/api/dsh-mc-event/listener', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    });
+    const resumed = await resumedResponse.json();
+    assert.equal(resumed.enabled, true);
+    assert.equal(resumed.subscriptions.length, 1);
+
+    await post(started.endpoint, { type: 'chat', data: { message: 'after resume' } });
+    await eventually(() => ctx.followed.length === 1);
+    assert.match(ctx.followed[0].content[0].text, /after resume/);
+    assert.doesNotMatch(ctx.followed[0].content[0].text, /pending before pause|while paused/);
+
+    const clearedResponse = await fetch(
+      route.base + '/api/dsh-mc-event/listener?session_id=session-1',
+      { method: 'DELETE' },
+    );
+    assert.equal(clearedResponse.status, 200);
+    const cleared = await clearedResponse.json();
+    assert.equal(cleared.cleared, 1);
+    assert.deepEqual(cleared.subscriptions, []);
+    assert.equal(cleared.listening, false);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(ctx.followed.length, 1);
+  } finally {
+    await fetch(route.base + '/api/dsh-mc-event/listener', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    }).catch(() => {});
+    await ctx.tool.execute({ action: 'stop' }, exec).catch(() => {});
+    await route.close();
+    ctx.dispose();
+  }
+});
+
+test('两个 preset 实例只注册一条界面路由，全部卸载后才释放', () => {
+  const routes = new Map();
+  const webServer = {
+    register(route) {
+      if (routes.has(route.path)) throw new Error(`duplicate route: ${route.path}`);
+      routes.set(route.path, route.handler);
+      return () => {
+        routes.delete(route.path);
+      };
+    },
+  };
+  const first = fakeContext({ config: { port: 0 }, webServer });
+  const second = fakeContext({ config: { port: 0 }, webServer });
+  assert.equal(routes.size, 1);
+  first.dispose();
+  assert.equal(routes.size, 1);
+  second.dispose();
+  assert.equal(routes.size, 0);
+});
+
+test('界面路由拒绝非回环请求与非法开关值', async () => {
+  const ctx = fakeContext({ config: { port: 0 }, withWebServer: true });
+  const route = await startRouteServer(ctx.routes);
+  try {
+    const invalid = await fetch(route.base + '/api/dsh-mc-event/listener', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: 'yes' }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(await invalid.json(), { error: 'invalid-enabled' });
+
+    const invalidDelete = await fetch(
+      route.base + '/api/dsh-mc-event/listener?session_id=',
+      { method: 'DELETE' },
+    );
+    assert.equal(invalidDelete.status, 400);
+  } finally {
+    await route.close();
     ctx.dispose();
   }
 });

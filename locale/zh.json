@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Minecraft 事件订阅",
-    "description": "在本地监听 MC Event Reporter 的 JSON 事件，作为新消息投递给 Agent；Agent 空闲时自动唤醒。仅在挂载本插件的 preset 中可见。"
+    "description": "在本地监听 MC Event Reporter 的 JSON 事件，作为新消息投递给 Agent；界面可暂停投递、保留订阅并清除单个会话的订阅。仅在挂载本插件的 preset 中可见。"
   }
 }

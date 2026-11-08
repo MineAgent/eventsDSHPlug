@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Minecraft Event Subscriber",
-    "description": "Listen locally for MC Event Reporter JSON events and deliver them to the agent as new messages, waking an idle agent. Visible only in presets that mount this plugin."
+    "description": "Listen locally for MC Event Reporter JSON events and deliver them to the agent as new messages. The UI can pause delivery, keep subscriptions, and clear one conversation's subscription. Visible only in presets that mount this plugin."
   }
 }

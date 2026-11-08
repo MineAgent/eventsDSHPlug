@@ -1,22 +1,34 @@
 {
-  "name": "dsh-mc-event",
-  "version": "0.2.0",
+  "name": "@local/dsh-mc-event",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "DSH 插件：在本地监听 MC Event Reporter 的 JSON 事件，并作为新消息投递给 Agent（必要时唤醒）。",
+  "description": "DSH 插件：在本地监听 MC Event Reporter 的 JSON 事件，并作为新消息投递给 Agent（必要时唤醒）；带界面投递开关与会话订阅管理。",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
     "index.js",
+    "client.js",
     "locale/*.json",
     "icon.svg",
     "README.md",
     "LICENSE",
     "LICENSE.CC-BY-NC-SA-4.0"
   ],
+  "dsh": {
+    "manifestVersion": 1,
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
   "scripts": {
     "test": "node --test test/index.test.js"
   },
