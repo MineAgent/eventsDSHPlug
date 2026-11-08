@@ -1,0 +1,36 @@
+{
+  "name": "dsh-mc-event",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 插件：在本地监听 MC Event Reporter 的 JSON 事件，并作为新消息投递给 Agent（必要时唤醒）。",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "LICENSE.CC-BY-NC-SA-4.0"
+  ],
+  "scripts": {
+    "test": "node --test test/index.test.js"
+  },
+  "author": "MineAgent",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MineAgent/eventsDSHPlug.git"
+  },
+  "homepage": "https://github.com/MineAgent/eventsDSHPlug#readme",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "minecraft",
+    "events"
+  ]
+}

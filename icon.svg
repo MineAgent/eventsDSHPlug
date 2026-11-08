@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Minecraft event subscriber">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3f6b2b"/>
+      <stop offset="1" stop-color="#1b2a17"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="15" fill="url(#bg)"/>
+  <g fill="none" stroke="#d9f99d" stroke-width="2.4" stroke-linecap="round">
+    <path d="M18 24c4-6 10-9 14-9s10 3 14 9"/>
+    <path d="M22 33c2.6-3.8 6.4-6 10-6s7.4 2.2 10 6"/>
+    <path d="M27 42c1.4-2 3.1-3 5-3s3.6 1 5 3"/>
+  </g>
+  <circle cx="32" cy="49" r="3.4" fill="#facc15"/>
+  <circle cx="32" cy="33" r="2.2" fill="#bbf7d0"/>
+</svg>
