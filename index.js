@@ -1175,6 +1175,24 @@ async function closeListenerIfIdle() {
 }
 
 /**
+ * 全局 UI 入口：只注册 `/api/dsh-mc-event/listener` 状态路由。
+ *
+ * 这个入口由本包的 bundle 层挂在宿主全局，而不在 preset 内。DSH 的
+ * `dsh.client` 扫描只看主 Loader 的条目；preset 子插件在独立的 EntryTree
+ * 里，扫描不到，所以必须有一个全局条目来承载浏览器端 UI。
+ * @param {import('@deepseek-ai/cordis').Context} ctx - 插件上下文。
+ */
+export function applyUi(ctx) {
+  ensureDeliveryGate(ctx.logger);
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(() => {
+      acquireStateRoute(webCtx.webServer);
+      return () => releaseStateRoute();
+    }, 'mc-event: listener switch and subscription list route');
+  });
+}
+
+/**
  * 插件入口：注册 `subscribe_mc_event` 并维护按会话的订阅。
  * @param {import('@deepseek-ai/cordis').Context} ctx - 插件上下文。
  * @param {Record<string, unknown>} [config] - preset 行里的 config。
@@ -1182,7 +1200,7 @@ async function closeListenerIfIdle() {
  */
 export function apply(ctx, config = {}) {
   const resolved = resolveConfig(config);
-  ensureDeliveryGate(ctx.logger);
+  applyUi(ctx);
 
   /** @type {Map<string, object>} 会话 id → 订阅。 */
   const subscriptions = new Map();
@@ -1201,13 +1219,6 @@ export function apply(ctx, config = {}) {
     },
   };
   listenerHub.participants.add(participant);
-
-  ctx.inject(['webServer'], (webCtx) => {
-    webCtx.effect(() => {
-      acquireStateRoute(webCtx.webServer);
-      return () => releaseStateRoute();
-    }, 'mc-event: listener switch and subscription list route');
-  });
 
   if (!isLoopbackHost(resolved.host)) {
     ctx.logger?.warn?.(

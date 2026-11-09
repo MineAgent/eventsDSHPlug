@@ -11,7 +11,8 @@ import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { apply } from '../index.js';
+import { apply, applyUi } from '../index.js';
+import * as uiEntry from '../ui.js';
 
 /** 测试专用 DSH_HOME，避免读写真实用户的 mc-event.json。 */
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'dsh-mc-event-test-'));
@@ -625,14 +626,57 @@ test('两个 preset 实例共用同一个监听器', async () => {
   }
 });
 
-test('包声明为普通依赖而不是全局 bundle，并带 Web 客户端', () => {
+test('包同时提供全局 UI bundle 与 preset 工具入口', () => {
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(manifest.name, '@local/dsh-mc-event');
-  assert.equal(manifest.dsh.bundle, undefined);
+  assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml');
   assert.equal(manifest.dsh.client.platform, 'web');
   assert.equal(manifest.exports['./client'], './client.js');
+  assert.equal(manifest.exports['./ui'], './ui.js');
   assert.ok(manifest.files.includes('client.js'));
+  assert.ok(manifest.files.includes('ui.js'));
+  assert.ok(manifest.files.includes('cordis.patch.yml'));
   assert.equal(manifest.peerDependencies, undefined);
+  assert.equal(typeof uiEntry.apply, 'function');
+  assert.equal(uiEntry.default, undefined);
+});
+
+test('全局 UI 入口只注册状态路由，不注册模型工具', () => {
+  const tools = [];
+  const routes = new Map();
+  const cleanups = [];
+  const ctx = {
+    webServer: {
+      register(route) {
+        routes.set(route.path, route.handler);
+        return () => {
+          routes.delete(route.path);
+        };
+      },
+    },
+    tools: {
+      register() {
+        tools.push('registered');
+        return () => {};
+      },
+    },
+    effect(callback) {
+      cleanups.push(callback());
+    },
+    inject(names, callback) {
+      callback(ctx);
+    },
+    get(name) {
+      return name === 'webServer' ? ctx.webServer : undefined;
+    },
+    logger: { info() {}, warn() {} },
+  };
+  applyUi(ctx);
+  assert.deepEqual(tools, []);
+  assert.equal(routes.size, 1);
+  assert.ok(routes.has('/api/dsh-mc-event/listener'));
+  while (cleanups.length > 0) cleanups.pop()();
+  assert.equal(routes.size, 0);
 });
 
 test('非法配置在 apply 时抛错', () => {

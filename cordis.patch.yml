@@ -1,0 +1,9 @@
+# dsh-mc-event 的 bundle 层：在宿主全局挂一个 UI 入口。
+#
+# preset 里的 `@local/dsh-mc-event` 仍负责 subscribe_mc_event /
+# get_mc_event_types；这个全局条目只承载 `/api/dsh-mc-event/listener`
+# 状态路由和浏览器端开关。DSH 只扫描主 Loader 条目的 dsh.client，preset
+# 子插件在独立 EntryTree 里，所以 UI 必须走全局条目。
+- insert:
+    - id: mc-event-ui
+      name: '@local/dsh-mc-event/ui'

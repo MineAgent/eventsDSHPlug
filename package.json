@@ -6,13 +6,16 @@
   "description": "DSH 插件：在本地监听 MC Event Reporter 的 JSON 事件，并作为新消息投递给 Agent（必要时唤醒）；带界面投递开关与会话订阅管理。",
   "exports": {
     ".": "./index.js",
+    "./ui": "./ui.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
     "index.js",
+    "ui.js",
     "client.js",
+    "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
     "README.md",
@@ -21,6 +24,9 @@
   ],
   "dsh": {
     "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,

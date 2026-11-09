@@ -33,35 +33,49 @@ Web UI 的输入框下方还有一个「MC 事件监听」开关：关闭只**�
 
 ## 安装
 
-本插件是**普通依赖**，本身不是全局 bundle；真正把它挂进会话的是某个 preset 的
-`plugins` 列表。下面以 profile 名 `<profile>`、本仓库路径 `<this-repo>` 为例。
+本插件同时扮演两个角色：
+
+- **bundle 层**：`cordis.patch.yml` 在宿主全局插入 `mc-event-ui`，承载
+  `/api/dsh-mc-event/listener` 路由与浏览器端开关；
+- **preset 子插件**：`@local/dsh-mc-event` 挂在 MC 模式的 `plugins` 列表里，提供
+  `subscribe_mc_event` / `get_mc_event_types`。
+
+DSH 只扫描**主 Loader 条目**的 `dsh.client`；preset 子插件挂在独立的 EntryTree
+里，扫描不到。因此 UI 必须由全局 `mc-event-ui` 条目承载，只把插件当普通依赖
+装进 preset 是不够的。
+
+下面以 profile 名 `<profile>`、本仓库路径 `<this-repo>` 为例：
 
 ```sh
 # 1. 确认 MC 桥 bundle 已安装（使用 MC 模式时；其它 preset 可跳过）
 dsh plugin --profile <profile> add link:<mc-bundle-path>
 
-# 2. 把本插件作为普通依赖装进 profile
+# 2. 把本插件装进 profile
 dsh plugin --profile <profile> add link:<this-repo>
-# 出现 "declares no dsh.bundle — installed as a plain dependency" 警告是正常的
-
-# 3. 确认它只出现在 dependencies 里
-grep -n "dsh-mc-event" ~/.dsh/profiles/<profile>/package.json
 ```
 
-`~/.dsh/profiles/<profile>/package.json` 应满足：
+然后确认 `~/.dsh/profiles/<profile>/package.json` 满足：
 
 - `dependencies` 里有 `"@local/dsh-mc-event": "link:..."`；
-- `dsh.profile.bundles` **没有** `@local/dsh-mc-event`。
+- `dsh.profile.bundles` **包含** `"@local/dsh-mc-event"`（没有就手动加进去）。
 
-如果之前把它作为 bundle 装过，需要从 `dsh.profile.bundles` 删除该行，再执行
-`dsh plugin --profile <profile> install` 让 lockfile 与 node_modules 对齐。
+也可以用 DSH 的 `plugin_manager action=install_bundle` 安装本仓库，它会把包加进
+bundle 列表。
 
-本插件仍不是 bundle，但 `package.json` 里的 `dsh.client` 会让 DSH 把
-`client.js` 作为 Web 客户端加载。客户端文件是手写的 `__ModuleLoader__` 契约
-产物，不需要构建；首次安装或升级到带界面开关的版本后，需要重启 `dsh web`
-（客户端清单在进程启动时扫描），再刷新页面。
+客户端文件是手写的 `__ModuleLoader__` 契约产物，不需要构建；新增 bundle 条目或
+升级到带界面开关的版本后，需要重启 `dsh web`（客户端清单在进程启动时扫描），
+再刷新页面。
 
-然后在**使用该 preset 的**插件配置里加一行：
+如果使用的是 MineAgent 的 MC 桥 bundle，它的 `cordis.patch.yml` 已经包含两个
+preset 里的工具行（`preset-mc` / `preset-mc-plus` 各一份），无需再手动添加工具。
+修改 bundle 层后不会 HMR，需要重新安装该 bundle：
+
+```sh
+dsh plugin --profile <profile> remove <mc-bundle-package>
+dsh plugin --profile <profile> add link:<mc-bundle-path>
+```
+
+如果使用其它 preset，则该 preset 的 `plugins` 里也需要有：
 
 ```yaml
 - id: mc-event
@@ -74,20 +88,14 @@ grep -n "dsh-mc-event" ~/.dsh/profiles/<profile>/package.json
     catalogUrl: http://127.0.0.1:3420/evt/
 ```
 
-如果使用的是 MineAgent 的 MC 桥 bundle，它的 `cordis.patch.yml` 已经包含这两行
-（`preset-mc` / `preset-mc-plus` 各一份），无需再手动添加。修改 bundle 层后不会
-HMR，需要重新安装该 bundle：
-
-```sh
-dsh plugin --profile <profile> remove <mc-bundle-package>
-dsh plugin --profile <profile> add link:<mc-bundle-path>
-```
-
 重载会短暂 dispose 现有相关会话；在 GUI 里重新打开会话即可。
 
 验证：
 
 ```sh
+dsh --profile <profile> --dump-config | grep -n -A2 "mc-event-ui"
+# 顶层应出现 id: mc-event-ui、name: '@local/dsh-mc-event/ui'（全局 UI）。
+
 dsh --profile <profile> --dump-config | grep -n -A2 "name: '@local/dsh-mc-event'"
 # 每个挂载它的 preset 出现一次；未挂载的 preset 不应出现。
 ```
@@ -270,6 +278,8 @@ node --test test/index.test.js
 | 文件 | 作用 |
 |---|---|
 | `index.js` | 插件主体：共享 HTTP 监听、订阅管理、投递开关、界面路由、批量投递、工具注册 |
+| `ui.js` | 全局 bundle 入口：只注册界面状态路由，不注册模型工具 |
+| `cordis.patch.yml` | bundle 层：在宿主全局插入 `mc-event-ui` |
 | `client.js` | Web 客户端：输入框下方的开关、会话订阅列表与「清除本会话」 |
 | `locale/*.json` | 插件管理器里的标题与描述 |
 | `icon.svg` | 插件图标 |
@@ -281,5 +291,5 @@ node --test test/index.test.js
 
 | 范围 | 内容 | 许可 |
 | --- | --- | --- |
-| 代码 | `index.js`、`client.js`、`package.json`、`locale/*.json`、`icon.svg` | [GNU General Public License v3.0 only](LICENSE)（GPL-3.0-only） |
+| 代码 | `index.js`、`ui.js`、`client.js`、`cordis.patch.yml`、`package.json`、`locale/*.json`、`icon.svg` | [GNU General Public License v3.0 only](LICENSE)（GPL-3.0-only） |
 | 文档 | `README.md` 及仓库中的其他说明文字 | [CC BY-NC-SA 4.0](LICENSE.CC-BY-NC-SA-4.0) |
