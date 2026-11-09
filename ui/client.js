@@ -35,6 +35,11 @@ window.__ModuleLoader__.load({
       clearing: '清除中…',
       current: '当前',
       sessionsCount: '有订阅的会话（{count}）',
+      sessionActive: '本会话订阅中',
+      sectionLabel: 'MC 事件订阅',
+      sessionsTitle: '有订阅的会话',
+      emptySessions: '暂无会话订阅',
+      stats: '收到 {received} · 已投递 {delivered}',
       switchOffLabel: '开启事件投递',
       switchOnLabel: '关闭事件投递',
       hintOn: '关闭只暂停投递：不结束订阅、不释放 3422；已订阅会话在重新开启后继续收到新事件。',
@@ -56,6 +61,11 @@ window.__ModuleLoader__.load({
       clearing: 'Clearing…',
       current: 'Current',
       sessionsCount: 'Subscribed conversations ({count})',
+      sessionActive: 'This conversation is subscribed',
+      sectionLabel: 'MC event subscriptions',
+      sessionsTitle: 'Subscribed conversations',
+      emptySessions: 'No conversations are subscribed',
+      stats: '{received} received · {delivered} delivered',
       switchOffLabel: 'Enable event delivery',
       switchOnLabel: 'Pause event delivery',
       hintOn: 'Turning it off only pauses delivery: subscriptions stay and port 3422 stays open. Subscribed chats resume when you turn it back on.',
@@ -66,6 +76,42 @@ window.__ModuleLoader__.load({
       invalidResponse: 'The server returned an unrecognized state',
       retry: 'Retry',
     };
+
+    /** 当前界面语言；apply 时按宿主 locale 与浏览器语言确定。 */
+    var lang = 'zh';
+
+    /** 取文案；{name} 形式做参数替换。 */
+    function translate(key, params) {
+      var table = lang === 'en' ? EN : ZH;
+      var text = table[key];
+      if (text === undefined) text = ZH[key];
+      if (text === undefined) return key;
+      if (params === undefined) return text;
+      return text.replace(/\{(\w+)\}/g, function (whole, name) {
+        return params[name] === undefined ? whole : String(params[name]);
+      });
+    }
+
+    /** 从 locale 服务 / 浏览器语言推断界面语言。 */
+    function detectLang(ctx) {
+      var candidate = '';
+      try {
+        var state = ctx.locale && ctx.locale.getSnapshot ? ctx.locale.getSnapshot() : null;
+        if (state && typeof state.active === 'string') candidate = state.active;
+      } catch (error) {
+        /* locale 服务读取失败按浏览器语言处理 */
+      }
+      if (candidate === '') {
+        try {
+          candidate =
+            (typeof navigator !== 'undefined' && (navigator.language || navigator.userLanguage)) ||
+            '';
+        } catch (error) {
+          candidate = '';
+        }
+      }
+      return String(candidate).toLowerCase().indexOf('en') === 0 ? 'en' : 'zh';
+    }
 
     var CSS = [
       '.dsh-mc-event-root{display:inline-flex;flex-direction:column;align-items:flex-start;gap:6px;box-sizing:border-box;max-width:100%;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
@@ -94,6 +140,14 @@ window.__ModuleLoader__.load({
       '.dsh-mc-event-sessionTitle{min-width:0;color:var(--dsw-alias-label-primary);text-overflow:ellipsis;white-space:nowrap;overflow:hidden}',
       '.dsh-mc-event-current{flex:none;padding:0 5px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}',
       '.dsh-mc-event-subId{margin-left:auto;flex:none;color:var(--dsw-alias-label-tertiary);font-size:11px}',
+      '.dsh-mc-event-settings{display:flex;flex-direction:column;gap:10px;box-sizing:border-box;width:100%;max-width:720px;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px}',
+      '.dsh-mc-event-settingsHeader{display:flex;align-items:center;gap:8px;min-width:0}',
+      '.dsh-mc-event-settingsTitle{flex:none;color:var(--dsw-alias-label-primary);font-weight:600}',
+      '.dsh-mc-event-settingsHint{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}',
+      '.dsh-mc-event-settingsHeading{margin:2px 0 0;color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:500}',
+      '.dsh-mc-event-settingsList{display:flex;flex-direction:column;box-sizing:border-box;padding:6px 10px;border:0.5px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}',
+      '.dsh-mc-event-empty{padding:4px 0;color:var(--dsw-alias-label-tertiary);font-size:12px}',
+      '.dsh-mc-event-settings[data-enabled="true"] .dsh-mc-event-dot{background:var(--dsw-alias-brand-primary)}',
     ].join('');
 
     var snapshot = {
@@ -244,37 +298,75 @@ window.__ModuleLoader__.load({
       return t('statusActive', { count: state.subscriptions.length });
     }
 
-    function ListenerControl(props) {
-      var t = props.t;
-      var sessionId = props.sessionId;
+    /** 订阅模块级快照，组件卸载时自动取消。 */
+    function useSnapshot() {
       var pair = React.useState(getSnapshot());
-      var state = pair[0];
-      var setState = pair[1];
-      var expandedPair = React.useState(false);
-      var expanded = expandedPair[0];
-      var setExpanded = expandedPair[1];
-
       React.useEffect(function () {
         return subscribe(function () {
-          setState(getSnapshot());
+          pair[1](getSnapshot());
         });
       }, []);
+      return pair[0];
+    }
 
-      var subscriptions = state.subscriptions;
-      var current = undefined;
-      for (var index = 0; index < subscriptions.length; index += 1) {
-        if (subscriptions[index] && subscriptions[index].session_id === sessionId) {
-          current = subscriptions[index];
-          break;
-        }
+    /** 找当前会话的订阅。 */
+    function currentSubscription(state, sessionId) {
+      for (var index = 0; index < state.subscriptions.length; index += 1) {
+        var row = state.subscriptions[index];
+        if (row && row.session_id === sessionId) return row;
       }
+      return undefined;
+    }
+
+    /** 投递开关按钮。 */
+    function switchButton(t, state, disabled) {
+      var hint = state.enabled ? t('hintOn') : t('hintOff');
+      return h(
+        'button',
+        {
+          type: 'button',
+          role: 'switch',
+          className: 'dsh-mc-event-switch',
+          'aria-checked': state.enabled,
+          'aria-label': state.enabled ? t('switchOnLabel') : t('switchOffLabel'),
+          title: hint,
+          disabled: disabled,
+          onClick: function () {
+            updateEnabled(!snapshot.enabled);
+          },
+        },
+        h('span', { className: 'dsh-mc-event-knob', 'aria-hidden': 'true' }),
+      );
+    }
+
+    /** 错误重试按钮。 */
+    function errorButton(t, error) {
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'dsh-mc-event-error',
+          title: error,
+          'aria-label': t('retry'),
+          onClick: refresh,
+        },
+        '!',
+      );
+    }
+
+    /**
+     * 输入框下方：仅在当前会话有订阅时显示。没有订阅的会话不显示任何东西；
+     * 全局开关和所有有订阅的会话列表在设置页。
+     */
+    function SessionDock(props) {
+      var t = props.t;
+      var sessionId = props.sessionId;
+      var state = useSnapshot();
+      var current = currentSubscription(state, sessionId);
+      if (current === undefined) return null;
+
       var busy = state.phase === 'loading' || state.saving || state.clearing;
       var hint = state.enabled ? t('hintOn') : t('hintOff');
-      var errorTitle =
-        state.error === null
-          ? ''
-          : (current === undefined ? t('saveFailed') : t('clearFailed')) + ': ' + state.error;
-
       return h(
         'div',
         {
@@ -288,70 +380,67 @@ window.__ModuleLoader__.load({
           { className: 'dsh-mc-event-row', title: hint },
           h('span', { className: 'dsh-mc-event-dot', 'aria-hidden': 'true' }),
           h('span', { className: 'dsh-mc-event-label' }, t('label')),
-          h('button', {
-            type: 'button',
-            role: 'switch',
-            className: 'dsh-mc-event-switch',
-            'aria-checked': state.enabled,
-            'aria-label': state.enabled ? t('switchOnLabel') : t('switchOffLabel'),
-            title: hint,
-            disabled: busy,
-            onClick: function () {
-              updateEnabled(!snapshot.enabled);
+          switchButton(t, state, busy),
+          h(
+            'span',
+            {
+              className: 'dsh-mc-event-status',
+              title: current.subscription_id || '',
             },
-          }, h('span', { className: 'dsh-mc-event-knob', 'aria-hidden': 'true' })),
-          h('span', { className: 'dsh-mc-event-status' }, statusText(t, state)),
-          current === undefined
-            ? null
-            : h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dsh-mc-event-action',
-                  title: t('clearHint'),
-                  disabled: state.clearing,
-                  onClick: function () {
-                    clearCurrent(sessionId);
-                  },
-                },
-                state.clearing ? t('clearing') : t('clearCurrent'),
-              ),
-          subscriptions.length === 0
-            ? null
-            : h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dsh-mc-event-action',
-                  'aria-expanded': expanded,
-                  onClick: function () {
-                    setExpanded(!expanded);
-                  },
-                },
-                (expanded ? '▾ ' : '▸ ') + t('sessionsCount', { count: subscriptions.length }),
-              ),
-          state.error === null
-            ? null
-            : h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'dsh-mc-event-error',
-                  title: errorTitle,
-                  'aria-label': t('retry'),
-                  onClick: function () {
-                    if (current === undefined) updateEnabled(snapshot.enabled);
-                    else clearCurrent(sessionId);
-                  },
-                },
-                '!',
-              ),
+            t('sessionActive'),
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-mc-event-action',
+              title: t('clearHint'),
+              disabled: state.clearing,
+              onClick: function () {
+                clearCurrent(sessionId);
+              },
+            },
+            state.clearing ? t('clearing') : t('clearCurrent'),
+          ),
+          state.error === null ? null : errorButton(t, state.error),
         ),
-        expanded && subscriptions.length > 0
-          ? h(
-              'div',
-              { className: 'dsh-mc-event-list' },
-              subscriptions.map(function (row) {
+      );
+    }
+
+    /**
+     * 设置页「MC 事件订阅」：始终显示全局开关和所有有订阅的会话，
+     * 即使一个订阅都没有也显示空状态。
+     */
+    function SettingsSection(props) {
+      var t = props.t;
+      var state = useSnapshot();
+      var busy = state.phase === 'loading' || state.saving;
+      var hint = state.enabled ? t('hintOn') : t('hintOff');
+      return h(
+        'div',
+        {
+          className: 'dsh-mc-event-settings',
+          'data-enabled': state.enabled ? 'true' : 'false',
+          'data-phase': state.phase,
+        },
+        h('style', null, CSS),
+        h(
+          'div',
+          { className: 'dsh-mc-event-settingsHeader' },
+          h('span', { className: 'dsh-mc-event-dot', 'aria-hidden': 'true' }),
+          h('span', { className: 'dsh-mc-event-settingsTitle' }, t('label')),
+          switchButton(t, state, busy),
+          h('span', { className: 'dsh-mc-event-status' }, statusText(t, state)),
+          state.error === null ? null : errorButton(t, state.error),
+        ),
+        h('p', { className: 'dsh-mc-event-settingsHint' }, hint),
+        h('div', { className: 'dsh-mc-event-settingsHeading' }, t('sessionsTitle')),
+        h(
+          'div',
+          { className: 'dsh-mc-event-settingsList' },
+          state.subscriptions.length === 0
+            ? h('div', { className: 'dsh-mc-event-empty' }, t('emptySessions'))
+            : state.subscriptions.map(function (row) {
                 var title =
                   typeof row.session_title === 'string' && row.session_title.length > 0
                     ? row.session_title
@@ -360,14 +449,22 @@ window.__ModuleLoader__.load({
                   'div',
                   { className: 'dsh-mc-event-session', key: row.subscription_id || row.session_id },
                   h('span', { className: 'dsh-mc-event-sessionTitle', title: row.session_id }, title),
-                  row.session_id === sessionId
-                    ? h('span', { className: 'dsh-mc-event-current' }, t('current'))
-                    : null,
-                  h('span', { className: 'dsh-mc-event-subId' }, row.subscription_id || ''),
+                  h(
+                    'span',
+                    { className: 'dsh-mc-event-subId' },
+                    [
+                      row.subscription_id || '',
+                      t('stats', {
+                        received: row.received ?? 0,
+                        delivered: row.delivered ?? 0,
+                      }),
+                    ]
+                      .filter(Boolean)
+                      .join(' · '),
+                  ),
                 );
               }),
-            )
-          : null,
+        ),
       );
     }
 
@@ -375,6 +472,7 @@ window.__ModuleLoader__.load({
       name: 'mc-event',
       inject: ['slots', 'locale'],
       apply: function (ctx) {
+        lang = detectLang(ctx);
         ctx.effect(function () {
           return ctx.locale.register(NS, { zh: ZH, en: EN });
         }, 'mc-event: dictionaries');
@@ -407,7 +505,22 @@ window.__ModuleLoader__.load({
                 return { sessionId: sessionId };
               },
             },
-            ListenerControl,
+            SessionDock,
+          );
+        });
+
+        ctx.slots.inject('settings.section', function () {
+          return ctx.slots.register(
+            {
+              name: 'settings.section',
+              id: 'mc-event',
+              order: 95,
+              label: function () {
+                return translate('sectionLabel');
+              },
+              locale: NS,
+            },
+            SettingsSection,
           );
         });
       },

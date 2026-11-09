@@ -646,6 +646,9 @@ test('主包是普通 preset 依赖，UI 由独立裸包承载', () => {
   const client = readFileSync(new URL('../ui/client.js', import.meta.url), 'utf8');
   const loadId = client.match(/__ModuleLoader__\.load\(\{\s*id:\s*'([^']+)'/);
   assert.equal(loadId?.[1], uiManifest.name);
+  assert.match(client, /settings\.section/);
+  assert.match(client, /conversation\.composer\.dock/);
+  assert.match(client, /emptySessions/);
 });
 
 test('全局 UI 入口只注册状态路由，不注册模型工具', () => {
