@@ -1,0 +1,7 @@
+# dsh-mc-event-ui 的 bundle 层：在宿主全局挂一个 UI 入口。
+#
+# client-modules 只扫描已启用的顶层 Loader 行，而且只接受裸包名条目；
+# preset 子插件在独立 EntryTree 里，扫描不到。所以界面由这个独立包承载。
+- insert:
+    - id: mc-event-ui
+      name: '@local/dsh-mc-event-ui'

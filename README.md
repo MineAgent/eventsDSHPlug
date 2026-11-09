@@ -33,16 +33,17 @@ Web UI 的输入框下方还有一个「MC 事件监听」开关：关闭只**�
 
 ## 安装
 
-本插件同时扮演两个角色：
+本插件分成两个包：
 
-- **bundle 层**：`cordis.patch.yml` 在宿主全局插入 `mc-event-ui`，承载
-  `/api/dsh-mc-event/listener` 路由与浏览器端开关；
-- **preset 子插件**：`@local/dsh-mc-event` 挂在 MC 模式的 `plugins` 列表里，提供
-  `subscribe_mc_event` / `get_mc_event_types`。
+- **`@local/dsh-mc-event`**（本仓库根）：普通 preset 依赖，挂在 MC 模式的
+  `plugins` 列表里，提供 `subscribe_mc_event` / `get_mc_event_types`；
+- **`@local/dsh-mc-event-ui`**（[`ui/`](ui/)）：全局 bundle，承载
+  `/api/dsh-mc-event/listener` 路由与浏览器端开关。
 
-DSH 只扫描**主 Loader 条目**的 `dsh.client`；preset 子插件挂在独立的 EntryTree
-里，扫描不到。因此 UI 必须由全局 `mc-event-ui` 条目承载，只把插件当普通依赖
-装进 preset 是不够的。
+为什么 UI 要独立成包：DSH 只扫描**主 Loader 条目**的 `dsh.client`，而且只接受
+**裸包名**条目；preset 子插件在独立 EntryTree 里，`pkg/subpath` 形式的条目也会
+被跳过。所以界面不能挂在 preset 里的主包上，必须由独立的
+`@local/dsh-mc-event-ui` 裸包承载。
 
 下面以 profile 名 `<profile>`、本仓库路径 `<this-repo>` 为例：
 
@@ -50,17 +51,21 @@ DSH 只扫描**主 Loader 条目**的 `dsh.client`；preset 子插件挂在独�
 # 1. 确认 MC 桥 bundle 已安装（使用 MC 模式时；其它 preset 可跳过）
 dsh plugin --profile <profile> add link:<mc-bundle-path>
 
-# 2. 把本插件装进 profile
+# 2. 主包：preset 工具
 dsh plugin --profile <profile> add link:<this-repo>
+
+# 3. UI 包：全局开关与订阅列表
+dsh plugin --profile <profile> add link:<this-repo>/ui
 ```
 
 然后确认 `~/.dsh/profiles/<profile>/package.json` 满足：
 
-- `dependencies` 里有 `"@local/dsh-mc-event": "link:..."`；
-- `dsh.profile.bundles` **包含** `"@local/dsh-mc-event"`（没有就手动加进去）。
+- `dependencies` 里有 `"@local/dsh-mc-event": "link:..."` 和
+  `"@local/dsh-mc-event-ui": "link:<this-repo>/ui"`；
+- `dsh.profile.bundles` **包含** `"@local/dsh-mc-event-ui"`（没有就手动加进去）；
+- **主包** `@local/dsh-mc-event` 不需要在 bundles 里。
 
-也可以用 DSH 的 `plugin_manager action=install_bundle` 安装本仓库，它会把包加进
-bundle 列表。
+也可以用 DSH 的 `plugin_manager action=install_bundle` 安装 `ui/` 目录。
 
 客户端文件是手写的 `__ModuleLoader__` 契约产物，不需要构建；新增 bundle 条目或
 升级到带界面开关的版本后，需要重启 `dsh web`（客户端清单在进程启动时扫描），
@@ -94,7 +99,7 @@ dsh plugin --profile <profile> add link:<mc-bundle-path>
 
 ```sh
 dsh --profile <profile> --dump-config | grep -n -A2 "mc-event-ui"
-# 顶层应出现 id: mc-event-ui、name: '@local/dsh-mc-event/ui'（全局 UI）。
+# 顶层应出现 id: mc-event-ui、name: '@local/dsh-mc-event-ui'（全局 UI）。
 
 dsh --profile <profile> --dump-config | grep -n -A2 "name: '@local/dsh-mc-event'"
 # 每个挂载它的 preset 出现一次；未挂载的 preset 不应出现。
@@ -277,12 +282,13 @@ node --test test/index.test.js
 
 | 文件 | 作用 |
 |---|---|
-| `index.js` | 插件主体：共享 HTTP 监听、订阅管理、投递开关、界面路由、批量投递、工具注册 |
-| `ui.js` | 全局 bundle 入口：只注册界面状态路由，不注册模型工具 |
-| `cordis.patch.yml` | bundle 层：在宿主全局插入 `mc-event-ui` |
-| `client.js` | Web 客户端：输入框下方的开关、会话订阅列表与「清除本会话」 |
-| `locale/*.json` | 插件管理器里的标题与描述 |
-| `icon.svg` | 插件图标 |
+| `index.js` | 主包：共享 HTTP 监听、订阅管理、投递开关、界面路由、批量投递、工具注册 |
+| `locale/*.json` | 主包在插件管理器里的标题与描述 |
+| `icon.svg` | 主包图标 |
+| `ui/index.js` | UI 全局入口：只注册界面状态路由，不注册模型工具 |
+| `ui/cordis.patch.yml` | UI bundle 层：在宿主全局插入 `mc-event-ui` |
+| `ui/client.js` | Web 客户端：输入框下方的开关、会话订阅列表与「清除本会话」 |
+| `ui/locale/*.json`、`ui/icon.svg` | UI 包在插件管理器里的元数据 |
 | `test/index.test.js` | 离线测试 |
 
 ## 许可证
@@ -291,5 +297,5 @@ node --test test/index.test.js
 
 | 范围 | 内容 | 许可 |
 | --- | --- | --- |
-| 代码 | `index.js`、`ui.js`、`client.js`、`cordis.patch.yml`、`package.json`、`locale/*.json`、`icon.svg` | [GNU General Public License v3.0 only](LICENSE)（GPL-3.0-only） |
+| 代码 | `index.js`、`ui/*.js`、`ui/cordis.patch.yml`、`package.json`、`locale/*.json`、`icon.svg` | [GNU General Public License v3.0 only](LICENSE)（GPL-3.0-only） |
 | 文档 | `README.md` 及仓库中的其他说明文字 | [CC BY-NC-SA 4.0](LICENSE.CC-BY-NC-SA-4.0) |

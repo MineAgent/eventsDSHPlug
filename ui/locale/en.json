@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Minecraft Event Subscriber UI",
+    "description": "Adds the delivery switch, current-conversation subscription clear, and subscribed-conversation list for dsh-mc-event."
+  }
+}

@@ -12,7 +12,6 @@ import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, applyUi } from '../index.js';
-import * as uiEntry from '../ui.js';
 
 /** 测试专用 DSH_HOME，避免读写真实用户的 mc-event.json。 */
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'dsh-mc-event-test-'));
@@ -626,19 +625,27 @@ test('两个 preset 实例共用同一个监听器', async () => {
   }
 });
 
-test('包同时提供全局 UI bundle 与 preset 工具入口', () => {
+test('主包是普通 preset 依赖，UI 由独立裸包承载', () => {
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(manifest.name, '@local/dsh-mc-event');
-  assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml');
-  assert.equal(manifest.dsh.client.platform, 'web');
-  assert.equal(manifest.exports['./client'], './client.js');
-  assert.equal(manifest.exports['./ui'], './ui.js');
-  assert.ok(manifest.files.includes('client.js'));
-  assert.ok(manifest.files.includes('ui.js'));
-  assert.ok(manifest.files.includes('cordis.patch.yml'));
+  assert.equal(manifest.dsh, undefined);
+  assert.equal(manifest.exports['./client'], undefined);
+  assert.equal(manifest.exports['./ui'], undefined);
   assert.equal(manifest.peerDependencies, undefined);
-  assert.equal(typeof uiEntry.apply, 'function');
-  assert.equal(uiEntry.default, undefined);
+
+  const uiManifest = JSON.parse(
+    readFileSync(new URL('../ui/package.json', import.meta.url), 'utf8'),
+  );
+  assert.equal(uiManifest.name, '@local/dsh-mc-event-ui');
+  assert.equal(uiManifest.dsh.bundle.patch, './cordis.patch.yml');
+  assert.equal(uiManifest.dsh.client.platform, 'web');
+  assert.equal(uiManifest.exports['./client'], './client.js');
+  assert.ok(uiManifest.files.includes('client.js'));
+  assert.ok(uiManifest.files.includes('cordis.patch.yml'));
+
+  const client = readFileSync(new URL('../ui/client.js', import.meta.url), 'utf8');
+  const loadId = client.match(/__ModuleLoader__\.load\(\{\s*id:\s*'([^']+)'/);
+  assert.equal(loadId?.[1], uiManifest.name);
 });
 
 test('全局 UI 入口只注册状态路由，不注册模型工具', () => {

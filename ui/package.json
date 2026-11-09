@@ -1,0 +1,38 @@
+{
+  "name": "@local/dsh-mc-event-ui",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "dsh-mc-event 的 Web 界面：投递开关、当前会话订阅清除与有订阅会话列表。",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test ../test/index.test.js"
+  },
+  "license": "GPL-3.0-only"
+}

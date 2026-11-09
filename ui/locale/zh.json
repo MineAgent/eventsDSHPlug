@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Minecraft 事件订阅界面",
+    "description": "为 dsh-mc-event 提供输入框下方的投递开关、当前会话订阅清除与有订阅会话列表。"
+  }
+}

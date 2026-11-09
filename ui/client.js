@@ -1,5 +1,5 @@
 /**
- * dsh-mc-event — 浏览器端。
+ * dsh-mc-event-ui — 浏览器端。
  *
  * 在输入框下方的 `conversation.composer.dock` 中放一个紧凑的「MC 事件监听」
  * 开关：关闭只暂停向 Agent 投递事件，不结束订阅、不释放 3422；重新开启后
@@ -11,7 +11,7 @@
  */
 
 window.__ModuleLoader__.load({
-  id: '@local/dsh-mc-event',
+  id: '@local/dsh-mc-event-ui',
   factory(require) {
     'use strict';
 
